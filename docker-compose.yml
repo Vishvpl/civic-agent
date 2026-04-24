@@ -4,31 +4,44 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
     depends_on:
-      postgres:
-        condition: sevice_healthy
-      redis:
+      civic-agent-postgres:
+        condition: service_healthy
+      civic-agent-redis:
         condition: service_healthy
     volumes:
       - ./app:/app/app
   
   civic-agent-postgres:
     image: postgres:16-alpine
+    networks:
+      default:
+        aliases:
+          - postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   civic-agent-redis:
     image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    networks:
+      default:
+        aliases:
+          - redis
     volumes:
       - redisdata:/data
     healthcheck:

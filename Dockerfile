@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBEFFERED=1 \
@@ -16,6 +16,6 @@ COPY . .
 
 FROM base AS production
 RUN addgroup --system app && adduser --system --group app
-USER app
 RUN chown -R app:app /app
+USER app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

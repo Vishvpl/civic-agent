@@ -7,6 +7,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # App
@@ -15,9 +16,20 @@ class Settings(BaseSettings):
     api_key_header: str = "X-API-Key"
 
     # AI Model Providers (New Section)
-    qwen_api_key: str
     gemini_api_key: str
     groq_api_key: str
+
+
+    # Qwen3-VL
+    qwen_api_url: str = ""
+    qwen_api_key: str = ""
+    qwen_timeout_seconds: int = 30
+    qwen_max_retries: int = 3
+
+    # Workers / queues
+    perception_worker_concurrency: int = 4
+    perception_queue_key: str = "perception:queue"
+    knowledge_queue_key: str = "knowledge:queue"  
 
     # Database
     postgres_host: str

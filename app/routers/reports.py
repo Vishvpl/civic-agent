@@ -22,7 +22,7 @@ async def _check_rate_limit(client_id: str, redis: aioredis.Redis) -> None:
     count= await redis.incr(key)
     if count == 1:
         await redis.expire(key, settings.rate_limit_window_seconds)
-    if count>settings.rate_limiit_requests:
+    if count>settings.rate_limit_requests:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded. Please wait before submitting another report"

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.instrumentation.fastapi import FastAPIInstumentor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    FastAPIInstumentor.instrument_app(app)
+    FastAPIInstrumentor.instrument_app(app)
 
     app.include_router(health.router)
     app.include_router(reports.router, prefix="/api/v1")
