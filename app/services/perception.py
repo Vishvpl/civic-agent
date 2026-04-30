@@ -9,9 +9,9 @@ import redis.asyncio as aioredis
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import DeadLetterQueue, LifecycleEvent, Report, ReportStatus
-from app.schemas.report import BoundingBox, PerceptionResult
+from app.schemas.report import PerceptionResult, DetectedIssue
 from app.services.exif import extract_exif
-from app.services.qwen_client import QwenResponse, call_qwen_vision
+from app.services.qwen_client import QwenResponse, call_qwen_vision, Issue
 
 logger = get_logger(__name__)
 
@@ -72,46 +72,59 @@ async def run_perception(report_id: uuid.UUID, image_bytes: bytes, mime_type: st
 
     # ── 3. Confidence routing ──────────────────────────────────────────────
     threshold = settings.vision_confidence_threshold
-    low_confidence = qwen_result.confidence_score < threshold
+    low_confidence = qwen_result.overall_confidence < threshold
 
     if low_confidence:
         logger.info(
             "perception_low_confidence",
             report_id=str(report_id),
-            score=qwen_result.confidence_score,
+            score=qwen_result.overall_confidence,
             threshold=threshold,
         )
         # Persist partial data and route to human review
         report.gps_latitude = exif.latitude
         report.gps_longitude = exif.longitude
         report.captured_at = exif.captured_at
-        report.confidence_score = qwen_result.confidence_score
+        report.confidence_score = qwen_result.overall_confidence
         report.perception_result = qwen_result.model_dump()
         await _transition_status(
             db,
             report,
             ReportStatus.PENDING_REVIEW,
-            f"Confidence {qwen_result.confidence_score:.2f} below threshold {threshold}",
+            f"Confidence {qwen_result.overall_confidence:.2f} below threshold {threshold}",
         )
         await db.commit()
         return None
 
     # ── 4. Build validated PerceptionResult ────────────────────────────────
-    bbox = None
-    if qwen_result.bounding_box:
-        bbox = BoundingBox(**qwen_result.bounding_box)
+    # Use the first detected issue (if any) as the primary label
+    # primary_issue = qwen_result.issues[0] if qwen_result.issues else None
+
+    def _map_issue(issue: Issue) -> DetectedIssue:
+        ymin, xmin, ymax, xmax = issue.bbox
+        return DetectedIssue(
+            type=issue.type,
+            bbox_ymin=ymin,
+            bbox_xmin=xmin,
+            bbox_ymax=ymax,
+            bbox_xmax=xmax,
+            severity=issue.severity,
+            description=issue.description,
+        )
+
+    # Inside run_perception(), replace step 4:
 
     result = PerceptionResult(
-        report_id=report_id,
-        issue_detected=qwen_result.issue_detected,
-        issue_label=qwen_result.issue_label,
-        confidence_score=qwen_result.confidence_score,
-        bounding_box=bbox,
-        gps_latitude=exif.latitude,
-        gps_longitude=exif.longitude,
-        captured_at=exif.captured_at,
-        low_confidence=False,
+    report_id=report_id,
+    summary=qwen_result.summary,
+    overall_confidence=qwen_result.overall_confidence,
+    issues=[_map_issue(i) for i in qwen_result.issues],
+    gps_latitude=exif.latitude,
+    gps_longitude=exif.longitude,
+    captured_at=exif.captured_at,
+    low_confidence=False,
     )
+
 
     # ── 5. Persist perception output ───────────────────────────────────────
     report.gps_latitude = result.gps_latitude

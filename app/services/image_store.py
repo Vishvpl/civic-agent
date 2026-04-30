@@ -5,7 +5,7 @@ from app.core.logging import get_logger
 
 logger=get_logger(__name__)
 
-_BASE_PATH=Path(os.getenv("IMAGE_STORE_PATH", "/tmp/images"))
+_BASE_PATH=Path(os.getenv("IMAGE_STORE_PATH", "/images"))
 _MIME_TO_EXT={
     "image/jpeg": ".jpg",
     "image/png": ".png",

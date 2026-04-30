@@ -2,29 +2,44 @@ import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 class IncomingReport(BaseModel):
     filename: str = Field(..., min_length=1, max_length=255)
     content_type: str = Field(..., pattern=r"^image/(jpeg|png|webp)$")
 
 class BoundingBox(BaseModel):
-    x: float = Field(..., ge=0.0, le=1.0)
-    y: float = Field(..., ge=0.0, le=1.0)
-    width: float = Field(..., gt=0.0, le=1.0)
-    height: float = Field(..., gt=0.0, le=1.0)
+    ymin: int = Field(..., ge=0, le=1000)
+    xmin: int = Field(..., ge=0, le=1000)
+    ymax: int = Field(..., ge=0, le=1000)
+    xmax: int = Field(..., ge=0, le=1000)
+
+
+class DetectedIssue(BaseModel):
+    type: str
+    bbox_ymin: int
+    bbox_xmin: int
+    bbox_ymax: int
+    bbox_xmax: int
+    severity: int = Field(..., ge=1, le=5)
+    description: str
 
 
 class PerceptionResult(BaseModel):
     report_id: uuid.UUID
-    issue_detected: bool
-    issue_label: str | None = None          # e.g. "pothole", "broken_streetlight"
-    confidence_score: float = Field(..., ge=0.0, le=1.0)
-    bounding_box: BoundingBox | None = None
+    summary: str
+    overall_confidence: float = Field(..., ge=0.0, le=1.0)
+    issues: list[DetectedIssue]
     gps_latitude: float | None = None
     gps_longitude: float | None = None
     captured_at: datetime | None = None
     low_confidence: bool = False
+    issue_count: int = 0
+
+    @model_validator(mode="after")
+    def derive_fields(self) -> "PerceptionResult":
+        self.issue_count = len(self.issues)
+        return self
 
     @field_validator("low_confidence", mode="before")
     @classmethod

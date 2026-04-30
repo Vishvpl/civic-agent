@@ -1,12 +1,18 @@
 """
-Client for Qwen3-VL vision API.
-Prompts the model to return a structured JSON report for municipal issues.
-Implements retry with exponential backoff and strict Pydantic validation.
+Vision client: calls LM Studio's OpenAI-compatible API to analyse civic images.
+
+LM Studio runs on the host machine and exposes a local OpenAI-compatible server
+at http://localhost:1234/v1.  From inside Docker it is reached via
+host.docker.internal:1234.
+
+Default model: qwen/qwen3-vl-4b  (load it in LM Studio first)
+Override via LMSTUDIO_MODEL in .env.
+
+The existing QwenResponse / Issue schema is preserved so no other code changes.
 """
 import asyncio
 import base64
 import json
-from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -16,7 +22,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-SYSTEM_PROMPT = """You are an expert AI Municipal Inspector. 
+SYSTEM_PROMPT = """You are an expert AI Municipal Inspector.
 Analyze the image to identify civic issues (potholes, garbage, water leaks, etc.).
 
 For each issue, provide:
@@ -41,110 +47,148 @@ YOU MUST RESPOND ONLY WITH VALID JSON. No markdown, no preamble.
 
 If no issues are found, return 'issues': [] and 'summary': 'No issues detected.'"""
 
+
 class Issue(BaseModel):
     type: str
     bbox: list[int] = Field(..., description="[ymin, xmin, ymax, xmax] 0-1000")
     severity: int = Field(..., ge=1, le=5)
     description: str
 
+
 class QwenResponse(BaseModel):
     summary: str
     overall_confidence: float = Field(..., ge=0.0, le=1.0)
     issues: list[Issue]
 
+
+def _to_jpeg(image_bytes: bytes) -> bytes:
+    """
+    Convert image to JPEG.
+    LM Studio's Qwen3-VL only accepts JPEG/PNG data-URLs — WebP causes
+    'url field must be a base64 encoded image' or 'Invalid url' errors.
+    """
+    import io
+    from PIL import Image
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90, optimize=True)
+    return buf.getvalue()
+
 async def call_qwen_vision(image_bytes: bytes, mime_type: str = "image/jpeg") -> QwenResponse:
     """
-    Call Qwen3-VL via Hugging Face Inference API. 
-    Orchestrates Phase 2 of the Civic-Duty Agent pipeline.
+    Analyse a civic image using LM Studio's local OpenAI-compatible API.
+    Drop-in replacement for the previous HF / Gemini / Ollama backends.
+
+    LM Studio accepts images as OpenAI-style base64 data-URLs.
+    Since inference is local there are no external payload size limits.
     """
     settings = get_settings()
-    b64_image = base64.b64encode(image_bytes).decode()
 
-    # Refined payload for HF Chat/Vision completion
+    # LM Studio Qwen3-VL rejects WebP — convert everything to JPEG first
+    jpeg_bytes = _to_jpeg(image_bytes)
+    b64_image = base64.b64encode(jpeg_bytes).decode()
+    # LM Studio requires a proper data-URL (raw base64 alone → 'Invalid url')
+    data_url = f"data:image/jpeg;base64,{b64_image}"
+
+    # OpenAI-compatible chat/completions payload
     payload = {
-        "model": "Qwen/Qwen3-VL-8B-Instruct",
+        "model": settings.lmstudio_model,
+        "stream": False,
+        "temperature": 0.01,       # near-deterministic for JSON stability
+        "max_tokens": 512,
+        # NOTE: response_format is NOT set — LM Studio vision models reject it
         "messages": [
             {
-                "role": "system", 
-                "content": [{"type": "text", "text": SYSTEM_PROMPT}]
+                "role": "system",
+                "content": SYSTEM_PROMPT,
             },
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{b64_image}"},
+                        "image_url": {"url": data_url},
                     },
                     {
-                        "type": "text", 
-                        "text": "Inspect this image and provide a JSON report."
+                        "type": "text",
+                        "text": "Inspect this image and provide a JSON report.",
                     },
                 ],
-            }
+            },
         ],
-        "parameters": {
-            "max_new_tokens": 512,
-            "temperature": 0.01, # Near-deterministic for JSON stability
-            "return_full_text": False
-        },
     }
 
+    chat_url = f"{settings.lmstudio_base_url.rstrip('/')}/v1/chat/completions"
     last_error: Exception | None = None
 
     async with httpx.AsyncClient(timeout=settings.qwen_timeout_seconds) as client:
         for attempt in range(1, settings.qwen_max_retries + 1):
             try:
-                response = await client.post(
-                    settings.qwen_api_url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {settings.huggingface_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                
-                # Handle HF specific status codes (e.g., 503 Model Loading)
-                if response.status_code == 503:
-                    raise httpx.HTTPStatusError("Model is currently loading", request=response.request, response=response)
-                
+                response = await client.post(chat_url, json=payload)
                 response.raise_for_status()
-                raw_data = response.json()
 
-                # Robust parsing of HF output formats
-                content = ""
-                if isinstance(raw_data, list) and len(raw_data) > 0:
-                    content = raw_data[0].get("generated_text", "")
-                elif isinstance(raw_data, dict):
-                    # Check for OpenAI-style or standard HF dict
-                    content = raw_data.get("choices", [{}])[0].get("message", {}).get("content") or raw_data.get("generated_text", "")
+                raw_data = response.json()
+                # Standard OpenAI response shape
+                content: str = (
+                    raw_data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
 
                 if not content:
-                    raise ValueError(f"Empty response from API: {raw_data}")
+                    raise ValueError(f"Empty response from LM Studio: {raw_data}")
 
-                clean_json = content.strip().removeprefix("```json").removesuffix("```").strip()
-                
+                # Strip accidental markdown fences
+                clean_json = (
+                    content.strip()
+                    .removeprefix("```json")
+                    .removeprefix("```")
+                    .removesuffix("```")
+                    .strip()
+                )
+
                 parsed = QwenResponse.model_validate_json(clean_json)
-                
+
                 logger.info(
-                    "qwen_perception_complete",
+                    "lmstudio_perception_complete",
+                    model=settings.lmstudio_model,
                     attempt=attempt,
                     issues_count=len(parsed.issues),
                     confidence=parsed.overall_confidence,
                 )
                 return parsed
 
-            except (httpx.HTTPStatusError, httpx.RequestError, ValidationError, json.JSONDecodeError, ValueError) as exc:
+            except httpx.HTTPStatusError as exc:
+                # Log the full response body so we can see LM Studio's error detail
+                try:
+                    err_body = exc.response.text
+                except Exception:
+                    err_body = "<unreadable>"
                 last_error = exc
                 wait = 2 ** (attempt - 1)
                 logger.warning(
-                    "qwen_perception_retry",
+                    "lmstudio_perception_retry",
+                    attempt=attempt,
+                    status_code=exc.response.status_code,
+                    error_body=err_body,
+                    next_retry_in=f"{wait}s",
+                )
+                if attempt < settings.qwen_max_retries:
+                    await asyncio.sleep(wait)
+
+            except (httpx.RequestError, ValidationError, json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+                wait = 2 ** (attempt - 1)
+                logger.warning(
+                    "lmstudio_perception_retry",
                     attempt=attempt,
                     error=str(exc),
-                    next_retry_in=f"{wait}s"
+                    next_retry_in=f"{wait}s",
                 )
                 if attempt < settings.qwen_max_retries:
                     await asyncio.sleep(wait)
 
     raise RuntimeError(
-        f"Qwen3-VL Perception failed after {settings.qwen_max_retries} attempts. Last error: {last_error}"
+        f"LM Studio vision perception failed after {settings.qwen_max_retries} attempts. "
+        f"Last error: {last_error}"
     )

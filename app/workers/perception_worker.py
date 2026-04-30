@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import get_redis_pool
 from app.db.session import AsyncSessionLocal, engine
+from app.services.image_store import load_image
 from app.services.perception import run_perception
 import redis.asyncio as aioredis
 
@@ -24,17 +25,6 @@ def _handle_signal(sig, frame):
     logger.info("worker_shutdown_signal", signal=sig)
     _shutdown=True
 
-async def _fetch_image_bytes(report_id: uuid.UUID) -> tuple[bytes, str] | None:
-    import os
-    path=f"/tmp/images/{report_id}"
-    for ext, mime in [(".jpg", "image/jpeg"), (".png", "image/png"), (".webp", "image/webp"), (".jpeg", "image/jpeg")]:
-        full_path = path+ext 
-        if os.path.exists(full_path):
-            with open(full_path, "rb") as f:
-                return f.read(), mime
-    logger.error("worker_image_not_found", report_id=str(report_id))
-    return None
-
 async def process_one(report_id_str: str, redis_client: aioredis.Redis) -> None:
     try:
         report_id = uuid.UUID(report_id_str)
@@ -42,10 +32,11 @@ async def process_one(report_id_str: str, redis_client: aioredis.Redis) -> None:
         logger.error("worker_invalid_report_id", value=report_id_str)
         return
 
-    image_data = await _fetch_image_bytes(report_id)
+    image_data = load_image(report_id)
     if not image_data:
+        logger.error("worker_image_not_found", report_id=str(report_id))
         return
-    
+
     image_bytes, mime_type = image_data
 
     async with AsyncSessionLocal() as db:

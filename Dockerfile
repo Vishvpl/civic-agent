@@ -16,6 +16,6 @@ COPY . .
 
 FROM base AS production
 RUN addgroup --system app && adduser --system --group app
-RUN chown -R app:app /app
+RUN mkdir -p /images && chown -R app:app /app /images
 USER app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

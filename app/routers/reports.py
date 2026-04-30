@@ -75,7 +75,17 @@ async def submit_report(
     await db.refresh(report)
 
     logger.info("report_received", report_id=str(report.id), filename=file.filename)
-    save_image(report.id, contents, file.content_type)
+
+    try:
+        saved_path = save_image(report.id, contents, file.content_type)
+        logger.info("image_store_success", report_id=str(report.id), path=saved_path)
+    except OSError as exc:
+        logger.error("image_store_failed", report_id=str(report.id), error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist image to disk. Check IMAGE_STORE_PATH config.",
+        )
+
     await redis.rpush("perception:queue", str(report.id))
 
     return ReportResponse(

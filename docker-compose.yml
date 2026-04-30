@@ -8,6 +8,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - REDIS_HOST=redis
+      - IMAGE_STORE_PATH=/images
     depends_on:
       civic-agent-postgres:
         condition: service_healthy
@@ -15,6 +16,29 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/app/app
+      - imagedata:/images
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach LM Studio on host machine
+
+  civic-agent-worker:
+    build: .
+    command: ["python", "-m", "app.workers.perception_worker"]
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - IMAGE_STORE_PATH=/images
+    depends_on:
+      civic-agent-postgres:
+        condition: service_healthy
+      civic-agent-redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - imagedata:/images
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach LM Studio on host machine
   
   civic-agent-postgres:
     image: postgres:16-alpine
@@ -53,3 +77,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  imagedata:

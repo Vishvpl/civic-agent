@@ -15,16 +15,35 @@ class Settings(BaseSettings):
     secret_key: str
     api_key_header: str = "X-API-Key"
 
-    # AI Model Providers (New Section)
-    gemini_api_key: str
-    groq_api_key: str
+    # AI Model Providers
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
 
+    # Gemini
+    gemini_model: str = "gemini-1.5-flash"
+    gemini_timeout_seconds: int = 45
+    gemini_max_retries: int = 3
 
-    # Qwen3-VL
+    # Qwen3-VL (legacy HF config — kept for reference)
     qwen_api_url: str = ""
     qwen_api_key: str = ""
-    qwen_timeout_seconds: int = 30
+    qwen_timeout_seconds: int = 180
+
+    # LM Studio (local OpenAI-compatible vision inference)
+    lmstudio_base_url: str = "http://host.docker.internal:1234"
+    lmstudio_model: str = "qwen/qwen3-vl-4b"
     qwen_max_retries: int = 3
+
+    # ChromaDB
+    chroma_persist_path: str = "./chroma_db"
+    chroma_collection_name: str = "municipal_code"
+
+    #RAG
+    rag_top_k: int = 6
+    rag_cache_ttl_seconds: int = 604800 # 7 days
+
+    # Queues
+    action_queue_key: str = "action:queue"
 
     # Workers / queues
     perception_worker_concurrency: int = 4
