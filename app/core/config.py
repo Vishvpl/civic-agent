@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # Gemini
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-3-flash-preview"
     gemini_timeout_seconds: int = 45
     gemini_max_retries: int = 3
 

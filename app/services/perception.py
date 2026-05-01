@@ -72,26 +72,26 @@ async def run_perception(report_id: uuid.UUID, image_bytes: bytes, mime_type: st
 
     # ── 3. Confidence routing ──────────────────────────────────────────────
     threshold = settings.vision_confidence_threshold
-    low_confidence = qwen_result.overall_confidence < threshold
+    low_confidence = qwen_result.confidence_score < threshold
 
     if low_confidence:
         logger.info(
             "perception_low_confidence",
             report_id=str(report_id),
-            score=qwen_result.overall_confidence,
+            score=qwen_result.confidence_score,
             threshold=threshold,
         )
         # Persist partial data and route to human review
         report.gps_latitude = exif.latitude
         report.gps_longitude = exif.longitude
         report.captured_at = exif.captured_at
-        report.confidence_score = qwen_result.overall_confidence
+        report.confidence_score = qwen_result.confidence_score
         report.perception_result = qwen_result.model_dump()
         await _transition_status(
             db,
             report,
             ReportStatus.PENDING_REVIEW,
-            f"Confidence {qwen_result.overall_confidence:.2f} below threshold {threshold}",
+            f"Confidence {qwen_result.confidence_score:.2f} below threshold {threshold}",
         )
         await db.commit()
         return None
@@ -117,7 +117,7 @@ async def run_perception(report_id: uuid.UUID, image_bytes: bytes, mime_type: st
     result = PerceptionResult(
     report_id=report_id,
     summary=qwen_result.summary,
-    overall_confidence=qwen_result.overall_confidence,
+    confidence_score=qwen_result.confidence_score,
     issues=[_map_issue(i) for i in qwen_result.issues],
     gps_latitude=exif.latitude,
     gps_longitude=exif.longitude,

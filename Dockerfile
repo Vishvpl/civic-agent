@@ -1,13 +1,13 @@
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBEFFERED=1 \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+    libpq-dev gcc libmagic-dev poppler-utils tesseract-ocr libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml .
 RUN pip install -e .

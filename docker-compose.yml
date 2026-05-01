@@ -49,8 +49,9 @@ services:
       - postgres
       - redis
     volumes:
-      - chroma_data: /app/chroma_db
-      - ./municipal_docs: /app/municipal_docs:ro
+      - ./app:/app/app
+      - chroma_data:/app/chroma_db
+      - ./municipal_docs:/app/municipal_docs:ro
 
   postgres:
     image: postgres:16-alpine

@@ -1,25 +1,19 @@
 """
-Gemini 1.5 Flash client.
+Gemini client using the official google-genai SDK.
 Takes the PerceptionResult + RAG context chunks and returns a validated ActionPlan.
 Retries once with a stricter prompt on validation failure, then routes to human review.
 """
 
 import asyncio
 import json
-import httpx
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential
-)
+from google import genai
+from google.genai import types
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.schemas.report import ActionPlan, PerceptionResult, RecommendedTool
 
 logger = get_logger(__name__)
 
-_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 SYSTEM_PROMPT = """You are a legal compliance engine for a municipal civic reporting system.
 You will receive:
 1. A list of detected civic issues with severity scores (1-5).
@@ -27,16 +21,17 @@ You will receive:
 
 Your job is to produce a legally-grounded action plan.
 
-YOU MUST respond ONLY with valid JSON matching this exact schema - no markdown, no preamble:
-{{
-  "report_id": "<uuid from input>",
-  "issue_type": "<primary issue type, e.g. 'pothole'>",
-  "statute_ref": "<most relevant municipal code reference, e.g. 'Municipal Code §14.2.3', or null>",
-  "severity": "<one of: low | medium | high | critical>",
-  "recommended_tools": ["send_civic_report", "log_to_official_ledger", "reverse_geocode"],
-  "context_summary": "<2-3 sentences: what the issue is, what the law says, what action is warranted>",
-  "requires_human_review": false | true
-}}
+YOU MUST respond ONLY with a JSON object. No markdown, no preamble.
+Schema:
+{
+  "report_id": "UUID string",
+  "issue_type": "string",
+  "statute_ref": "string or null",
+  "severity": "low | medium | high | critical",
+  "recommended_tools": "send_civic_report" | "log_to_official_ledger" | "reverse_geocode",
+  "context_summary": "string",
+  "requires_human_review": boolean
+}
 
 Severity mapping from detected issue scores:
     1-2 → low, 3 → medium, 4 → high, 5 → critical
@@ -60,7 +55,7 @@ def _build_user_prompt(perception: PerceptionResult, context_chunks: list[str]) 
 
     return f"""REPORT ID: {perception.report_id}
     SCENE SUMMARY: {perception.summary}
-    OVERALL CONFIDENCE: {perception.overall_confidence: .2f}
+    CONFIDENCE SCORE: {perception.confidence_score: .2f}
     {gps_text}
 
     DETECTED ISSUES:
@@ -71,29 +66,47 @@ def _build_user_prompt(perception: PerceptionResult, context_chunks: list[str]) 
 
     Produce the JSON action plan now."""
 
-async def _call_gemini(prompt: str, system: str) -> str:
-    """Raw Gemini API call. Returns the text content"""
+async def _call_gemini_genai(prompt: str, system: str) -> str:
+    """Modern Google GenAI SDK call."""
     settings = get_settings()
-    url = f"{_GEMINI_BASE}/{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
-    payload = {
-        "system_instruction": {"parts": [{"text": system}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig":{
-            "temperature": 0.0,
-            "maxOutputTokens": 512,
-            "responseMimeType": "application/json"
-        }
-    }
-
-    async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        data=response.json()
-
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError,IndexError) as exc:
-        raise ValueError(f"Unexpected Gemini response shape: {data}") from exc
+    client = genai.Client(api_key=settings.gemini_api_key)
+    
+    # Use the async generate method via .aio
+    response = await client.aio.models.generate_content(
+        model=settings.gemini_model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.0,
+            max_output_tokens=2048,
+            response_mime_type="application/json",
+            safety_settings=[
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                ),
+                types.SafetySetting(
+                    category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                ),
+            ],
+        )
+    )
+    
+    if not response.text:
+        # Check if it was blocked or had another finish reason
+        reason = response.candidates[0].finish_reason if response.candidates else "unknown"
+        raise ValueError(f"Empty response from Gemini. Finish reason: {reason}")
+        
+    return response.text
 
 def _parse_action_plan(raw_json: str) -> ActionPlan:
     clean = (
@@ -114,13 +127,14 @@ async def build_action_plan(perception: PerceptionResult, context_chunks: list[s
 
     user_prompt = _build_user_prompt(perception, context_chunks)
 
-    for attempt in range(1,3):
-        strict_system=SYSTEM_PROMPT if attempt == 1 else (
-            SYSTEM_PROMPT+"\n\nCRITICAL: Your previous response failed JSON validation. "
+    for attempt in range(1, 3):
+        strict_system = SYSTEM_PROMPT if attempt == 1 else (
+            SYSTEM_PROMPT + "\n\nCRITICAL: Your previous response failed JSON validation. "
             "Return ONLY the raw JSON object. Absolutely no extra text."
         )
+        raw = "<no response>"
         try:
-            raw = await _call_gemini(user_prompt, strict_system)
+            raw = await _call_gemini_genai(user_prompt, strict_system)
             plan = _parse_action_plan(raw)
             logger.info(
                 "gemini_action_plan_built",
@@ -136,7 +150,7 @@ async def build_action_plan(perception: PerceptionResult, context_chunks: list[s
                 "gemini_parse_failed",
                 attempt=attempt,
                 error=str(exc),
-                raw_response=raw if "raw" in dir() else "<no response>"
+                raw_response=raw
             )
             if attempt == 2:
                 raise ValueError(

@@ -34,7 +34,7 @@ For each issue, provide:
 YOU MUST RESPOND ONLY WITH VALID JSON. No markdown, no preamble.
 {
   "summary": "Technical overview of the scene",
-  "overall_confidence": 0.95,
+  "confidence_score": 0.95,
   "issues": [
     {
       "type": "pothole",
@@ -57,7 +57,7 @@ class Issue(BaseModel):
 
 class QwenResponse(BaseModel):
     summary: str
-    overall_confidence: float = Field(..., ge=0.0, le=1.0)
+    confidence_score: float = Field(..., ge=0.0, le=1.0, validation_alias="overall_confidence")
     issues: list[Issue]
 
 
@@ -154,7 +154,7 @@ async def call_qwen_vision(image_bytes: bytes, mime_type: str = "image/jpeg") ->
                     model=settings.lmstudio_model,
                     attempt=attempt,
                     issues_count=len(parsed.issues),
-                    confidence=parsed.overall_confidence,
+                    confidence=parsed.confidence_score,
                 )
                 return parsed
 
