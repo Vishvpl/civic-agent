@@ -15,7 +15,7 @@ import base64
 import json
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, AliasChoices
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -49,16 +49,16 @@ If no issues are found, return 'issues': [] and 'summary': 'No issues detected.'
 
 
 class Issue(BaseModel):
-    type: str
-    bbox: list[int] = Field(..., description="[ymin, xmin, ymax, xmax] 0-1000")
-    severity: int = Field(..., ge=1, le=5)
-    description: str
+    type: str | None = None
+    bbox: list[int] | None = Field(default=None, description="[ymin, xmin, ymax, xmax] 0-1000")
+    severity: int | None = Field(default=None, ge=1, le=5)
+    description: str | None = None
 
 
 class QwenResponse(BaseModel):
     summary: str
-    confidence_score: float = Field(..., ge=0.0, le=1.0, validation_alias="overall_confidence")
-    issues: list[Issue]
+    confidence_score: float = Field(..., ge=0.0, le=1.0)
+    issues: list[Issue] = Field(default_factory=list)
 
 
 def _to_jpeg(image_bytes: bytes) -> bytes:

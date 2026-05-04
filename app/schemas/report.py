@@ -29,7 +29,7 @@ class PerceptionResult(BaseModel):
     report_id: uuid.UUID
     summary: str
     confidence_score: float = Field(..., ge=0.0, le=1.0, validation_alias=AliasChoices("confidence_score", "overall_confidence"))
-    issues: list[DetectedIssue]
+    issues: list[DetectedIssue] = Field(default_factory=list)
     gps_latitude: float | None = None
     gps_longitude: float | None = None
     captured_at: datetime | None = None
