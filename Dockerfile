@@ -15,7 +15,12 @@ RUN pip install -e .
 COPY . .
 
 FROM base AS production
-RUN addgroup --system app && adduser --system --group app
-RUN mkdir -p /images && chown -R app:app /app /images
+RUN addgroup --system app && adduser --system --group --home /home/app app
+RUN mkdir -p /images /home/app && chown -R app:app /app /images /home/app
+
+ENV HOME=/home/app
+ENV NUMBA_CACHE_DIR=/tmp/numba
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
 USER app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
