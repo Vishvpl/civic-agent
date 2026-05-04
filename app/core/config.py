@@ -94,6 +94,23 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str = ""
     log_level: str = "INFO"
 
+    # Groq
+    groq_api_key: str = ""
+    groq_model: str = ""
+    groq_timeout_seconds: int = 30
+    groq_max_retries: int = 3
+
+    # SMTP
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    municipal_email: str = ""
+
+    #  Geocoding
+    geocoding_api_url: str = "https://nominatim.openstreetmap.org/reverse"
+    geocoding_user_agent: str = "CivicAgent/1.0"
+
 
 @lru_cache
 def get_settings() -> Settings:
