@@ -38,10 +38,11 @@ def ingest_pdfs(pdf_dir: Path) -> None:
         logger.warning("no_pdfs_found", directory=str(pdf_dir))
         return 
 
-    # 2026 Recommended Embedding Model for Gemini
+    # Recommended Embedding Model for Gemini
     ef = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
         api_key=settings.gemini_api_key,
-        model_name="models/text-embedding-004" 
+        model_name="gemini-embedding-001",
+        task_type="RETRIEVAL_DOCUMENT"
     )
 
     client = chromadb.PersistentClient(path=settings.chroma_persist_path)
